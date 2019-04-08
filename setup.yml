@@ -1,0 +1,125 @@
+---
+- name: Install Minio S3 Server
+  hosts: all
+  become: true
+  vars:
+    # Minio binaries path
+    minio_server_bin: /usr/local/bin/minio
+    minio_client_bin: /usr/local/bin/mc
+
+    # Runtime user and group for the Minio server service
+    minio_user: minio
+    minio_group: minio
+
+    # Path to the file containing the ENV variables for the Minio server
+    minio_server_envfile: /etc/default/minio
+
+    # Minio server listen address
+    minio_server_addr: ":9000"
+
+    # Minio server data directories
+    minio_server_datadirs:
+      - /var/lib/minio
+    minio_server_make_datadirs: true
+
+    # Minio server cluster node list.
+    minio_server_cluster_nodes: [ ]
+
+    # Additional environment variables to be set in minio server environment
+    minio_server_env_extra: ""
+
+    # Additional Minio server CLI options
+    minio_server_opts: ""
+
+    # Minio access and secret keys
+    minio_access_key: myReallyLongAccessKey
+    minio_secret_key: mySuperSecretKey
+
+
+  handlers:
+
+    - name: restart minio
+      service:
+        name: minio
+        state: restarted
+
+  tasks:
+
+    - name: Update system
+      become: yes
+      yum:
+        state: latest
+        name: "*"
+
+    - name: Install needed packages
+      become: yes
+      yum:
+        state: present
+        name: "{{ item }}"
+      with_items:
+       - firewalld
+
+    - name: Create Minio group
+      group:
+        name: "{{ minio_group }}"
+        state: present
+
+    - name: Create Minio user
+      user:
+        name: "{{ minio_user }}"
+        group: "{{ minio_group }}"
+        shell: /bin/bash
+
+    - name: Download Minio server
+      become: yes
+      get_url:
+        url: https://dl.minio.io/server/minio/release/linux-amd64/minio
+        dest: "{{ minio_server_bin }}"
+        mode: 0755
+
+    - name: Download Minio client
+      become: yes
+      get_url:
+        url: https://dl.minio.io/client/mc/release/linux-amd64/mc
+        dest: "{{ minio_client_bin }}"
+        mode: 0755
+
+    - name: Create the Minio server systemd config
+      template:
+        src: minio.service.j2
+        dest: "/etc/systemd/system/minio.service"
+        owner: "root"
+        group: "root"
+
+    - name: Create the Minio server default config
+      template:
+        src: minio.j2
+        dest: "{{ minio_server_envfile }}"
+        owner: "root"
+        group: "root"
+        mode: 0640
+      notify: restart minio
+
+    - name: Create the Minio server init.d config
+      template:
+        src: minio.init.j2
+        dest: "/etc/init.d/minio"
+        owner: "root"
+        group: "root"
+        mode: 0750
+
+    - name: Create the Minio data storage directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ minio_user }}"
+        group: "{{ minio_group }}"
+        mode: 0750
+      when: minio_server_make_datadirs
+      with_items: "{{ minio_server_datadirs }}"
+
+    - name: Enable and start the Minio service
+      service:
+        name: minio
+        state: started
+        enabled: true
